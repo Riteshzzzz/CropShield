@@ -14,7 +14,7 @@ export default function Home() {
     const formData = new FormData();
     formData.append("file", file);
 
-    const res = await fetch("http://192.168.1.69:8000/predict", {
+    const res = await fetch("https://cropshield-api.onrender.com/predict", {
       method: "POST",
       body: formData,
     });
