@@ -4,6 +4,8 @@ import numpy as np
 import io
 import random
 from fastapi.middleware.cors import CORSMiddleware
+from utils.deficiency_rules import analyze_leaf
+
 
 
 from utils.image_quality import is_blurry, brightness_level
@@ -22,6 +24,28 @@ app.add_middleware(
 def home():
     return {"message": "CropShield API is running 🚀"}
 
+@app.get("/deficiencies")
+def list_deficiencies():
+    return {
+        "available_deficiencies": [
+            {
+                "type": "Nitrogen",
+                "symptom": "Yellowing starting from older leaves",
+                "solution": "Apply urea in small quantity"
+            },
+            {
+                "type": "Phosphorus",
+                "symptom": "Purple discoloration on leaves",
+                "solution": "Use phosphorus-rich fertilizer"
+            },
+            {
+                "type": "Potassium",
+                "symptom": "Brown edges on leaves",
+                "solution": "Apply potash fertilizer"
+            }
+        ]
+    }
+
 @app.post("/predict")
 async def predict(file: UploadFile = File(...)):
     image_bytes = await file.read()
@@ -34,42 +58,59 @@ async def predict(file: UploadFile = File(...)):
     blur, blur_score = is_blurry(image)
     brightness = brightness_level(image)
 
-    warnings = []
-
-    if blur:
-        warnings.append("Image is blurry, prediction may be less accurate")
-
-    if brightness < 60:
-        warnings.append("Image is too dark")
-
-    if brightness > 200:
-        warnings.append("Image is too bright")
-
-    if not warnings:
-        selected = {
-            "name": "Healthy",
-            "remedy": "No disease detected. Continue regular care."
-        }
-        confidence = round(random.uniform(0.85, 0.95), 2)
+    # ---- Image quality (human readable) ----
+    if blur_score > 0.6:
+        brightness_status = "low"
+    elif brightness > 200:
+        brightness_status = "high"
     else:
-        selected = random.choice([
-            {
-                "name": "Leaf Spot",
-                "remedy": "Remove infected leaves and avoid overhead watering."
-            },
-            {
-                "name": "Powdery Mildew",
-                "remedy": "Use sulfur-based fungicide and improve air circulation."
-            }
-        ])
-        confidence = round(random.uniform(0.60, 0.80), 2)
+        brightness_status = "normal"
+
+    # ---- Leaf color analysis (multi-deficiency) ----
+    analysis = analyze_leaf(np.array(image))
+
+    deficiencies = []
+
+    if analysis["yellow_ratio"] > 0.25:
+        deficiencies.append({
+            "type": "Nitrogen",
+            "confidence": int(analysis["yellow_ratio"] * 100),
+            "symptom": "Yellowing starting from older leaves",
+            "severity": "medium"
+        })
+
+    if analysis["purple_ratio"] > 0.15:
+        deficiencies.append({
+            "type": "Phosphorus",
+            "confidence": int(analysis["purple_ratio"] * 100),
+            "symptom": "Purple discoloration on leaves",
+            "severity": "high"
+        })
+
+    if analysis["brown_edge_ratio"] > 0.20:
+        deficiencies.append({
+            "type": "Potassium",
+            "confidence": int(analysis["brown_edge_ratio"] * 100),
+            "symptom": "Brown edges on leaves",
+            "severity": "low"
+        })
+
 
     return {
         "project": "CropShield",
-        "prediction": {
-            "disease": selected["name"],
-            "confidence": confidence
+        "deficiencies": deficiencies if deficiencies else [
+            {
+                "type": "Healthy",
+                "confidence": 90,
+                "symptom": "No visible nutrient deficiency patterns detected",
+                "severity": "none"
+            }
+        ],
+        "image_quality": {
+            "blur_score": round(blur_score, 2),
+            "brightness_level": brightness_status,
+            "note": "Confidence adjusted for image quality"
         },
-        "recommendation": selected["remedy"],
-        "warnings": warnings
+        "analysis_meta": analysis
     }
+
